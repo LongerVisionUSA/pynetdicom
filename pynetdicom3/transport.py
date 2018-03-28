@@ -9,10 +9,12 @@ EXPERIMENTAL
 """
 
 from collections import namedtuple
+import signal
 
 import gevent
 from gevent import socket
 from gevent.server import StreamServer
+from gevent.socket import create_connection
 
 from pynetdicom3.association import Association
 
@@ -173,7 +175,10 @@ class TransportService(object):
         Parameters
         ----------
         callback : callable
-            The callback function to add.
+            The callback function to add. Callbacks are triggered prior to
+            sending the corresponding event to the State Machine (and as
+            such may not necessarily represent the current state of the
+            association).
         trigger : str
             The trigger for the callback. Possible triggers corresponds to the
             State Machine Evt02, Evt05 and Evt17 events:
@@ -181,8 +186,9 @@ class TransportService(object):
               SCU and the requested connection with the peer has been opened.
             - 'connection_open_indication': called when acting as an SCP and
               a peer has opened a new connection.
-            - 'connection_close_indication': called when a connection is closed
-              by either the local or the peer.
+            - 'connection_close_indication': called when a connection has
+              closed, either because it the peer has timed out or the local
+              AE has performed an action that resulted in its closure.
         """
         if trigger not in self.callbacks:
             raise ValueError('Invalid callback trigger')
@@ -222,7 +228,9 @@ class TransportService(object):
         addr : tuple of (str, int)
             The (TCP/IP address, port number) of the connection.
         """
+        timeout = gevent.Timeout(10).start()
         print('New connection from %s:%s' % addr)
+        print('Socket timeout is', socket.timeout)
 
         # We can use the callbacks in the unit testing
         #   example: add in permanent loop to test concurrency
@@ -232,33 +240,61 @@ class TransportService(object):
             except Exception:
                 pass
 
-        # Testing, concurrency
+        # Need to test the connection
+        # The peer may shut down nicely and send a proper disconnection notice
+        # Alternatively the peer may just stop responding, in which case
+        #   we need to rely on a timeout
         while True:
-            gevent.sleep(0.5)
+            try:
+                gevent.sleep(0.5)
+            except:
+                print('Connection timed out')
+                break
 
-    def open_connection(self, primitive):
+        print('Closing connection...')
+
+    def open_connection(self, primitive, timeout):
         """Open a TCP/IP connection to `addr` on `port`.
 
         Parameters
         ----------
         primitive : 2-tuple
             The TRANSPORT CONNECT request primitive, represented as a tuple of
-            (str addr, int port), where addr is the TCP/IP address of the peer
-            and port is the port number.
+            (str host, int port), where host is the TCP/IP address of the peer
+            and port is the port number. A port number of 0 tells the OS to
+            use the default.
+        timeout : int
+            The timeout (in seconds) for the connection attempt.
 
         Returns
         -------
+        ???
+
         bool
             True if the connection is successful, False otherwise.
         """
-        (addr, port) = primitive
-        sock = socket.socket(type=socket.SOCK)
-        sock.connect((addr, port))
+        # What is dest?
+        try:
+            dest = create_connection(primitive, timeout)
+        except IOError as exc:
+            # Failed to connect
+            pass
+            return
 
         return True
 
-    def start_server(self, port, server_params=None, ssl_args=None):
+    @staticmethod
+    def timeout_expired(*args, **kwargs):
+
+        print(args, kwargs)
+
+    def start_server(self, port, server_params=None, ssl_args=None, blocking=True):
         """Start listening on `port` for connection requests.
+
+        Should we allow the use of multiple servers?
+
+        I.e. should we use server.start() or server.serve_forever()?
+        https://stackoverflow.com/questions/10287629/gevent-streamserver-start-does-not-seem-to-do-what-i-expect
 
         Connection
         ----------
@@ -298,6 +334,8 @@ class TransportService(object):
             SSL then the dict should contain the keyword arguments that would
             apply to ssl.wrap_socket. Se the documentation for geven's
             StreamServer for more information.
+        blocking : bool
+            If True, the server is blocking, False otherwise.
 
         References
         ----------
@@ -335,9 +373,23 @@ class TransportService(object):
             setattr(self.scp, name, params[name])
 
         self.scp.stop_timeout = 0
-        self.scp.serve_forever()
+
+        #gevent.signal(signal.SIGTERM, self.scp.close)
+        #gevent.signal(signal.SIGINT, self.scp.close)
+        socket.setdefaulttimeout(30)
+
+        #self.scp.serve_forever()
+        self.scp.start()
+        if blocking:
+            gevent.wait()
+
+    def close(self):
+        """Stop listening for incoming connection requests."""
+        if self.scp.closed():
+            sys.exit('Multiple exit signals received - aborting')
+        else:
+            StreamServer.close(self.scp)
 
     def stop_server(self):
-        """Stop listening for incoming connection requests."""
         if self.scp:
             self.scp.stop()

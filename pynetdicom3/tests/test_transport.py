@@ -7,6 +7,7 @@ from gevent.server import StreamServer
 
 import pytest
 
+from pynetdicom3 import AE, VerificationSOPClass
 from pynetdicom3.pdu import A_ASSOCIATE_RQ, A_ASSOCIATE_AC
 from pynetdicom3.utils import pretty_bytes, PresentationContext
 
@@ -229,5 +230,7 @@ def receive_associate_rq(a_associate_rq):
 
 
 if __name__ == '__main__':
-    ae = StreamServer(('localhost', 11112), on_c_echo)
-    ae.serve_forever()
+    ae = AE(port=11112, scp_sop_class=[VerificationSOPClass])
+    ae.start(blocking=True)
+    #ae = StreamServer(('localhost', 11112), on_c_echo)
+    #ae.serve_forever()

@@ -226,7 +226,7 @@ class ApplicationEntity(object):
         # XXX: Experimental
         self.transport = TransportService(self)
 
-    def start(self):
+    def start(self, blocking=True, ssl_args=None):
         """Start the AE as an SCP.
 
         Starts the SCP server and listen for connections. If a connection is
@@ -248,7 +248,8 @@ class ApplicationEntity(object):
         try:
             self.transport.start_server(self.port,
                                         server_params=None,
-                                        ssl_args=None)
+                                        ssl_args=ssl_args,
+                                        blocking=blocking)
         except KeyboardInterrupt:
             self.transport.stop_server()
 
