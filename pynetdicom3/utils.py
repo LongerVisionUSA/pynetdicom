@@ -94,13 +94,14 @@ def validate_ae_title(ae_title):
         raise TypeError("Invalid value for an AE title; must be a "
                         "non-empty string or bytes.")
 
+
 def pretty_bytes(lst, prefix='  ', delimiter='  ', items_per_line=16,
                  max_size=512, suffix=''):
     """Turn the bytestring `lst` into a list of nicely formatted str.
 
     Parameters
     ----------
-    bytestream : bytes or io.BytesIO
+    lst : bytes or io.BytesIO
         The bytes to convert to a nicely formatted string list
     prefix : str
         Insert `prefix` at the start of every item in the output string list

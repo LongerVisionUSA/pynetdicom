@@ -16,6 +16,7 @@ from pydicom.uid import (
 )
 
 from pynetdicom3.association import Association
+from pynetdicom3.transport import TransportService
 from pynetdicom3.utils import PresentationContext, validate_ae_title
 
 
@@ -144,6 +145,8 @@ class ApplicationEntity(object):
         The SOP Classes supported when acting as an SCP (SCP only)
     transfer_syntaxes : List of pydicom.uid.UID
         The supported transfer syntaxes
+    transport : pynetdicom3.transport.TransportService
+        The transport service provider.
     """
     # pylint: disable=too-many-instance-attributes,too-many-public-methods
     def __init__(self, ae_title='PYNETDICOM', port=0, scu_sop_class=None,
@@ -220,14 +223,17 @@ class ApplicationEntity(object):
         # Used to terminate AE when running as an SCP
         self._quit = False
 
+        # XXX: Experimental
+        self.transport = TransportService(self)
+
     def start(self):
         """Start the AE as an SCP.
 
-        When running the AE as an SCP this needs to be called to start the main
-        loop, it listens for connections on `local_socket` and if they request
-        association starts a new Association thread
-
-        Successful associations get added to `active_associations`
+        Starts the SCP server and listen for connections. If a connection is
+        made then a new StateMachine instance is created and association
+        negotiation starts. If the connection results association establishment
+        then the Association instance will be available in
+        `ApplicationEntity.active_associations`.
         """
         # If the SCP has no supported SOP Classes then there's no point
         #   running as a server
@@ -235,57 +241,16 @@ class ApplicationEntity(object):
             LOGGER.error("AE is running as an SCP but no supported SOP classes "
                          "for use with the SCP have been included during"
                          "ApplicationEntity initialisation or by setting the "
-                         "scp_supported_sop attribute")
+                         "'scp_supported_sop' attribute")
             raise ValueError("AE is running as an SCP but no SCP SOP classes "
                              "have been supplied.")
 
-        # Bind the local_socket to the specified listen port
-        #try:
-        self._bind_socket()
-        #except OSError:
-        #    self._quit = True
-        #    self.stop()
-        #    return
-
-        no_loops = 0
-        while True:
-            try:
-                # #60: Required so we don't max out the CPU
-                time.sleep(0.5)
-
-                if self._quit:
-                    break
-
-                # Monitor client_socket for association requests and
-                #   appends any associations to self.active_associations
-                self._monitor_socket()
-
-                # Delete dead associations
-                self.cleanup_associations()
-
-                # Every 50 loops run the garbage collection
-                if no_loops % 51 == 0:
-                    gc.collect()
-                    no_loops = 0
-
-                no_loops += 1
-
-            except KeyboardInterrupt:
-                self.stop()
-
-    def _bind_socket(self):
-        """Set up and bind the SCP socket.
-
-        AE.start(): Set up and bind the socket. Separated out from start() to
-        enable better unit testing
-        """
-        # The socket to listen for connections on, port is always specified
-        self.local_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.local_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.local_socket.bind(('', self.port))
-        # Listen for connections made to the socket, the backlog argument
-        #   specifies the maximum number of queued connections.
-        self.local_socket.listen(1)
+        try:
+            self.transport.start_server(self.port,
+                                        server_params=None,
+                                        ssl_args=None)
+        except KeyboardInterrupt:
+            self.transport.stop_server()
 
     def _build_presentation_contexts(self):
         """Build the presentation context list.
@@ -325,36 +290,6 @@ class ApplicationEntity(object):
                                    "255. The remaining SOP Classes will not be "
                                    "included")
                     break
-
-    def _monitor_socket(self):
-        """Monitor the local socket for connections.
-
-        AE.start(): Monitors the local socket to see if anyone tries to connect
-        and if so, creates a new association. Separated out from start() to
-        enable better unit testing
-        """
-        # FIXME: this needs to be dealt with properly
-        try:
-            read_list, _, _ = select.select([self.local_socket], [], [], 0)
-        except (socket.error, ValueError):
-            return
-
-        # If theres a connection
-        if read_list:
-            client_socket, _ = self.local_socket.accept()
-            client_socket.setsockopt(socket.SOL_SOCKET,
-                                     socket.SO_RCVTIMEO,
-                                     pack('ll', 10, 0))
-
-            # Create a new Association
-            # Association(local_ae, local_socket=None, max_pdu=16382)
-            assoc = Association(self,
-                                client_socket=client_socket,
-                                max_pdu=self.maximum_pdu_size,
-                                acse_timeout=self.acse_timeout,
-                                dimse_timeout=self.dimse_timeout)
-            assoc.start()
-            self.active_associations.append(assoc)
 
     def cleanup_associations(self):
         """Remove dead associations.
@@ -803,7 +738,7 @@ class ApplicationEntity(object):
               * 1 or 2, then return b''.
               * 3 then return the Kerberos Server ticket.
               * 4 then return the SAML response.
-              
+
             If the identity check fails then return None
         """
         raise NotImplementedError
@@ -822,7 +757,7 @@ class ApplicationEntity(object):
         after receiving a C-ECHO request and prior to sending the response.
 
         **Supported Service Classes**
-       
+
         Verification Service Class
 
         **Status**
@@ -962,7 +897,7 @@ class ApplicationEntity(object):
         Query/Retrieve Service Class
 
         **Status**
-    
+
         Success
 
         - 0x0000 - Success
