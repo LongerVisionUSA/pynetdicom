@@ -14,7 +14,7 @@ from pynetdicom3.utils import pretty_bytes, PresentationContext
 
 # Run for each incoming connection in a dedicated greenlet
 # essentially this should represent an Association
-def on_c_echo(socket, addr):
+def on_c_echo(*args, **kwargs):
     """A Verification SCP
 
     Parameters
@@ -24,7 +24,8 @@ def on_c_echo(socket, addr):
     addr : tuple of (str, int)
         The (TCP/IP address, port number) of the connection.
     """
-    print('New connection from %s:%s' % addr)
+    socket = kwargs['socket']
+    addr = kwargs['address']
 
     bytestream = bytes()
 
@@ -48,9 +49,9 @@ def on_c_echo(socket, addr):
     # Bytes 7 to (length - 7) is the remainder of the PDU
     bytestream += socket.recv(length)
 
-    #print('Received A-ASSOCIATION-RQ PDU from peer')
-    #for line in pretty_bytes(bytestream):
-    #    print(line)
+    print('Received A-ASSOCIATION-RQ PDU from peer')
+    for line in pretty_bytes(bytestream):
+        print(line)
 
     # Convert bytestream to A-ASSOCIATE primitive
     if pdu_type == 0x01:
@@ -228,9 +229,10 @@ def receive_associate_rq(a_associate_rq):
         print(line)
 
 
-
 if __name__ == '__main__':
     ae = AE(port=11112, scp_sop_class=[VerificationSOPClass])
+    ae.transport.add_callback(on_c_echo, 'connection_open_indication')
+    ae.transport.network_timeout = 20
     ae.start(blocking=True)
     #ae = StreamServer(('localhost', 11112), on_c_echo)
     #ae.serve_forever()

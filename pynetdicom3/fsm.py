@@ -122,6 +122,7 @@ def AE_1(dul):
     str
         'Sta4', the next state of the state machine.
     """
+    # TODO: refactor this to use the TransportService
     # Issue TRANSPORT CONNECT request primitive to local transport service
     dul.scu_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
@@ -222,6 +223,7 @@ def AE_4(dul):
     """
     # Issue A-ASSOCIATE confirmation (reject) primitive and close transport
     # connection
+    # TODO: Refactor to use TransportService
     dul.to_user_queue.put(dul.primitive)
     dul.scu_socket.close()
     dul.peer_socket = None
@@ -250,6 +252,7 @@ def AE_5(dul):
     str
         Sta2, the next state of the state machine
     """
+    # TODO: Refactor to use TransportService
     # Issue connection response primitive
     # not required due to implementation
 
@@ -523,6 +526,7 @@ def AR_3(dul):
     """
     # Issue A-RELEASE confirmation primitive and close transport connection
     dul.to_user_queue.put(dul.primitive)
+    # TODO: Refactor to use TransportService
     dul.scu_socket.close()
     dul.peer_socket = None
 
@@ -799,6 +803,7 @@ def AA_2(dul):
     """
     # Stop ARTIM timer if running. Close transport connection.
     dul.artim_timer.stop()
+    # TODO: Refactor to use TransportService
     dul.scu_socket.close()
     dul.peer_socket = None
 
@@ -832,6 +837,7 @@ def AA_3(dul):
     #   - Issue A-P-ABORT indication and close transport connection.
     # This action is triggered by the reception of an A-ABORT PDU
     dul.to_user_queue.put(dul.primitive)
+    # TODO: Refactor to use TransportService
     dul.scu_socket.close()
     dul.peer_socket = None
     dul.kill_dul()
@@ -987,6 +993,7 @@ def AA_8(dul):
         # Callback
         dul.assoc.acse.debug_send_abort(dul.pdu)
 
+        # TODO: Refactor to use TransportService
         try:
             # Encode and send A-ABORT to peer
             dul.scu_socket.send(dul.pdu.Encode())

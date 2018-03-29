@@ -138,6 +138,22 @@ class TransportService(object):
     AA-2 - Stop ARTIM and close transport connection
     AA-3 - Issue A-ABORT/A-P-ABORT indication and close transport connection
 
+    Attributes
+    ----------
+    ae : pynetdicom3.applicationentity.ApplicationEntity
+        The AE that the TransportService belongs to.
+    scp : gevent.StreamServer or None
+        When AE.start() has been called this is a gevent.StreamServer, None
+        if the StreamServer has stopped or not started.
+    callbacks : dict
+        A dict containing the str {callback trigger : list of callback
+        functions}. Possible callback triggers are:
+        - 'connection_confirmation_indication'
+        - 'connection_open_indication'
+        - 'connection_close_indication'
+    network_timeout : float
+        The timeout on receiving data from the peer or sending data to the peer.
+
     References
     ----------
     DICOM Standard, Part 8 - Network Communication Support for Message Exchange
@@ -155,6 +171,7 @@ class TransportService(object):
         self.callbacks = {'connection_confirmation_indication' : [],
                           'connection_open_indication' : [],
                           'connection_close_indication' : []}
+        self.network_timeout = 30
 
     def add_callback(self, callback, trigger):
         """Add a callback function to the TransportService.
@@ -164,13 +181,13 @@ class TransportService(object):
         Examples
         --------
         Print out the peer's IP address when a new connection is made.
-        >>> def callable():
-        ...     print(self)
-        >>> transport = TransportService()
-        >>> transport.add_callback(callable, 'on_receive_connection')
+        >>> def callable(*args, **kwargs):
+        ...     print(kwargs['addr'])
+        >>> ae = AE(port=11112, scp_sop_class=[VerificationSOPClass])
+        >>> ae.transport.add_callback(callable, 'connection_open_indication')
+        >>> ae.start()
 
-        from types import MethodType
-        obj.method = MethodType(new_method, obj, MyObj)
+        TODO: Define callback parameters for each trigger
 
         Parameters
         ----------
@@ -228,7 +245,9 @@ class TransportService(object):
         addr : tuple of (str, int)
             The (TCP/IP address, port number) of the connection.
         """
-        timeout = gevent.Timeout(10).start()
+        network_timeout = gevent.Timeout(10)
+        network_timeout.start()
+
         print('New connection from %s:%s' % addr)
         print('Socket timeout is', socket.timeout)
 
@@ -236,7 +255,7 @@ class TransportService(object):
         #   example: add in permanent loop to test concurrency
         for fn in self.callbacks['connection_open_indication']:
             try:
-                fn(self, socket, addr)
+                fn(socket=socket, address=addr)
             except Exception:
                 pass
 
@@ -244,12 +263,18 @@ class TransportService(object):
         # The peer may shut down nicely and send a proper disconnection notice
         # Alternatively the peer may just stop responding, in which case
         #   we need to rely on a timeout
-        while True:
-            try:
+        try:
+            while True:
                 gevent.sleep(0.5)
-            except:
-                print('Connection timed out')
-                break
+        except gevent.Timeout as t:
+            if t is not network_timeout:
+                print('Non-network timeout')
+                raise
+
+            print('Connection timed out')
+        # requires gevent 1.3
+        #finally:
+            #network_timeout.close()
 
         print('Closing connection...')
 
@@ -282,11 +307,6 @@ class TransportService(object):
             return
 
         return True
-
-    @staticmethod
-    def timeout_expired(*args, **kwargs):
-
-        print(args, kwargs)
 
     def start_server(self, port, server_params=None, ssl_args=None, blocking=True):
         """Start listening on `port` for connection requests.
@@ -359,7 +379,8 @@ class TransportService(object):
         #   * gevent.spawn_raw()
         #   * None
         #   * an integer - shortcut for gevent.pool.Pool(integer)
-        self.scp = StreamServer(('localhost', port), self.handle_server_connection)
+        self.scp = StreamServer(('localhost', port),
+                                self.handle_server_connection)
 
         # Set the server parameters
         params = {'stop_timeout' : 0,
@@ -372,16 +393,14 @@ class TransportService(object):
         for name in params:
             setattr(self.scp, name, params[name])
 
-        self.scp.stop_timeout = 0
-
         #gevent.signal(signal.SIGTERM, self.scp.close)
         #gevent.signal(signal.SIGINT, self.scp.close)
-        socket.setdefaulttimeout(30)
+        #socket.setdefaulttimeout(30)
 
-        #self.scp.serve_forever()
-        self.scp.start()
-        if blocking:
-            gevent.wait()
+        self.scp.serve_forever()
+        #self.scp.start()
+        #if blocking:
+        #    gevent.wait()
 
     def close(self):
         """Stop listening for incoming connection requests."""
