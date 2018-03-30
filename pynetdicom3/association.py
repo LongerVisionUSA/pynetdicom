@@ -41,7 +41,7 @@ from pynetdicom3.utils import PresentationContextManager
 LOGGER = logging.getLogger('pynetdicom3.assoc')
 
 
-class Association(threading.Thread):
+class Association(object):
     """Manages Associations with peer AEs.
 
     The actual low level work done for Associations is performed by
@@ -163,9 +163,9 @@ class Association(threading.Thread):
         #   as an SCU?
         # Q. Why do we need to feed the DUL an ACSE timeout?
         # A. ARTIM timer
-        self.dul = DULServiceProvider(socket=client_socket,
-                                      dul_timeout=self.ae.network_timeout,
-                                      assoc=self)
+        #self.dul = DULServiceProvider(socket=client_socket,
+        #                              dul_timeout=self.ae.network_timeout,
+        #                              assoc=self)
 
         # Dict containing the peer AE title, address and port
         self.peer_ae = peer_ae
@@ -211,12 +211,6 @@ class Association(threading.Thread):
             raise TypeError("ext_neg must be a list of Extended "
                             "Negotiation items or None")
 
-        # Set new ACSE and DIMSE providers
-        self.acse = ACSEServiceProvider(self, self.acse_timeout)
-        # FIXME: DIMSE max pdu should be the peer max
-        self.dimse = DIMSEServiceProvider(self.dul, self.dimse_timeout,
-                                          self.local_max_pdu)
-
         # Kills the thread loop in run()
         self._kill = False
         self._is_running = False
@@ -233,9 +227,10 @@ class Association(threading.Thread):
         self.send_c_cancel_move = self._send_c_cancel
         self.send_c_cancel_get = self._send_c_cancel
 
-        # Thread setup
-        threading.Thread.__init__(self)
-        self.daemon = True
+        # State Machine
+        self._fsm_state = 'Sta1'
+
+    def associate()
 
     def kill(self):
         """Kill the main association thread loop."""

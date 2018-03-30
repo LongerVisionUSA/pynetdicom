@@ -11,6 +11,8 @@ from struct import pack
 import sys
 import time
 
+import gevent
+
 from pydicom.uid import (
     ExplicitVRLittleEndian, ImplicitVRLittleEndian, ExplicitVRBigEndian, UID
 )
@@ -226,7 +228,7 @@ class ApplicationEntity(object):
         # XXX: Experimental
         self.transport = TransportService(self)
 
-    def start(self, blocking=True, ssl_args=None):
+    def start(self, ssl_args=None):
         """Start the AE as an SCP.
 
         Starts the SCP server and listen for connections. If a connection is
@@ -292,6 +294,7 @@ class ApplicationEntity(object):
                                    "included")
                     break
 
+    '''
     def cleanup_associations(self):
         """Remove dead associations.
 
@@ -303,6 +306,7 @@ class ApplicationEntity(object):
         #   assoc.is_alive() is inherited from threading.thread
         self.active_associations = \
             [assoc for assoc in self.active_associations if assoc.is_alive()]
+    '''
 
     def stop(self):
         """Stop the SCP.
@@ -344,6 +348,14 @@ class ApplicationEntity(object):
             association
         ext_neg : List of UserInformation objects, optional
             Used if extended association negotiation is required
+        acse_timeout : float
+            TODO: reconcile with AE timeout definition
+            The timeout to use for the ARTIM timer.
+        dimse_timeout : float or None
+            TODO: reconcile with AE timeout definition
+            When association has been established and DIMSE message are being
+            exchanged, this is the timeout to use while waiting for the next
+            DIMSE message.
 
         Returns
         -------
@@ -360,24 +372,36 @@ class ApplicationEntity(object):
                    'Address' : addr,
                    'Port' : port}
 
-        # Associate
-        assoc = Association(local_ae=self,
-                            peer_ae=peer_ae,
-                            acse_timeout=self.acse_timeout,
-                            dimse_timeout=self.dimse_timeout,
-                            max_pdu=max_pdu,
-                            ext_neg=ext_neg)
-        assoc.start()
+        # Create a new Association greenlet
+        assoc = gevent.Greenlet.spawn(Association, self)
+
+        # Configure the Association
+        assoc.peer_ae = peer_ae
+        assoc.acse_timeout = acse_timeout or self.acse_timeout
+        assoc.dimse_timeout = dimse_timeout or self.dimse_timeout
+        assoc.max_pdu = max_pdu
+        assoc.ext_neg = ext_neg
+
+        ae.available_associations.append(assoc)
+        assoc.associate(peer_ae)
+
+        #assoc = Association(local_ae=self,
+        #                    peer_ae=peer_ae,
+        #                    acse_timeout=self.acse_timeout,
+        #                    dimse_timeout=self.dimse_timeout,
+        #                    max_pdu=max_pdu,
+        #                    ext_neg=ext_neg)
+        #assoc.start()
 
         # Endlessly loops while the Association negotiation is taking place
-        while (not assoc.is_established and not assoc.is_rejected and
-               not assoc.is_aborted and not assoc.dul._kill_thread):
-            # Program loops here endlessly sometimes
-            time.sleep(0.1)
+        #while (not assoc.is_established and not assoc.is_rejected and
+        #       not assoc.is_aborted and not assoc.dul._kill_thread):
+        #    # Program loops here endlessly sometimes
+        #    time.sleep(0.1)
 
         # If the Association was established
-        if assoc.is_established:
-            self.active_associations.append(assoc)
+        #if assoc.is_established:
+        #    self.active_associations.append(assoc)
 
         return assoc
 

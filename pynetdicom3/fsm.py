@@ -10,95 +10,71 @@ from pynetdicom3.pdu_primitives import A_ABORT
 
 LOGGER = logging.getLogger('pynetdicom3.sm')
 
-# pylint: disable=invalid-name
 
+def state_machine(assoc, event):
+    """Perform the action associated with the `assoc` state and event
 
-class StateMachine(object):
-    """Implementation of the DICOM Upper Layer State Machine.
+    The Association's State Machine current state is determined from
+    `assoc.state`. The action to be performed is dependent on both the
+    state and the event. Once the event is performed the state will be updated
+    to its new value.
 
-    Seer PS3.8 Section 9.2.
-
-    Attributes
+    Parameters
     ----------
-    current_state : str
-        The current state of the state machine, 'Sta1' to 'Sta13'.
-    dul : pynetdicom3.dul.DULServiceProvider
-        The DICOM Upper Layer service instance for the local AE
+    assoc : pynetdicom3.association.Association
+        The Association to perform the action for.
+    event : str
+        The event that occured.
+
+    Raises
+    ------
+    ValueError
+        If the current state is invalid.
+    KeyError
+        If `event` is invalid or is not a valid event for the current state.
     """
-    def __init__(self, dul):
-        """Create a new StateMachine.
+    state = assoc._fsm_state
 
-        Parameters
-        ---------
-        dul : pynetdicom3.dul.DULServiceProvider
-            The DICOM Upper Layer Service instance for the local AE.
-        """
-        self.current_state = 'Sta1'
-        self.dul = dul
+    # Check current state is valid
+    if state not in STATES:
+        msg = 'The Association\'s state machine is in an invalid state ' \
+              '"{0}"'.format(state)
+        LOGGER.error(msg)
+        raise ValueError(msg)
 
-    def do_action(self, event):
-        """Execute the action triggered by `event`.
+    # Check (event + current state) is valid
+    if (event, state) not in TRANSITION_TABLE:
+        msg = "The Association's state machine received an invalid event " \
+              "'{}' for the current state '{}'".format(event, state)
+        LOGGER.error(msg)
+        raise KeyError(msg)
 
-        Parameters
-        ----------
-        event : str
-            The event to be processed, 'Evt1' to 'Evt19'
-        """
-        # Check (event + state) is valid
-        if (event, self.current_state) not in TRANSITION_TABLE:
-            LOGGER.error("DUL State Machine received an invalid event '%s' "
-                         "for the current state '%s'",
-                         event, self.current_state)
-            raise KeyError("DUL State Machine received an invalid event "
-                           "'{}' for the current state '{}'"
-                           .format(event, self.current_state))
+    # Determine action to perform
+    action_name = TRANSITION_TABLE[(event, state)]
 
-        action_name = TRANSITION_TABLE[(event, self.current_state)]
+    # action is the (description, function, state) tuple
+    #   associated with the action_name
+    action = ACTIONS[action_name]
 
-        # action is the (description, function, state) tuple
-        #   associated with the action_name
-        action = ACTIONS[action_name]
+    # Attempt to execute the action and move the state machine to its
+    #   next state
+    try:
+        # Execute the required action
+        next_state = action[1](assoc.ae.dul)
 
-        # Attempt to execute the action and move the state machine to its
-        #   next state
-        try:
-            # Execute the required action
-            next_state = action[1](self.dul)
+        #print(action_name, self.current_state, event, next_state)
 
-            #print(action_name, self.current_state, event, next_state)
-
-            # Move the state machine to the next state
-            self.transition(next_state)
-
-        except Exception as ex:
-            LOGGER.error("DUL State Machine received an exception attempting "
-                         "to perform the action '%s' while in state '%s'",
-                         action_name, self.current_state)
-            self.dul.kill_dul()
-            raise
-
-    def transition(self, state):
-        """Transition the state machine to the next state.
-
-        Parameters
-        ----------
-        state : str
-            The state to transition to, 'Sta1' to 'Sta13'.
-
-        Raises
-        ------
-        ValueError
-            If `state` is not a valid state.
-        """
-        # Validate that state is acceptable
-        if state in STATES.keys():
-            self.current_state = state
-        else:
-            LOGGER.error('Invalid state "%s" for State Machine', state)
-            raise ValueError('Invalid state "%s" for State Machine', state)
+        # Move the state machine to the next state
+        assoc._fsm_state = next_state
+    except Exception as ex:
+        LOGGER.error("The Association's state machine received an exception "
+                     "attempting to perform the action '%s' while in state "
+                     "'%s'", action_name, state)
+        raise
 
 
-def AE_1(dul):
+# pylint: disable=invalid-name
+def AE_1(assoc):
     """Association establishment action AE-1.
 
     From Idle state, local AE issues a connection request to a remote. This
@@ -124,20 +100,16 @@ def AE_1(dul):
     """
     # TODO: refactor this to use the TransportService
     # Issue TRANSPORT CONNECT request primitive to local transport service
-    dul.scu_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        # CalledPresentationAddress is set by the ACSE and
-        #   is an (address, port) tuple
-        dul.scu_socket.connect(dul.primitive.called_presentation_address)
-    except socket.error:
-        # Failed to connect
-        LOGGER.error("Association Request Failed: Failed to establish "
-                     "association")
-        LOGGER.error("Peer aborted Association (or never connected)")
-        LOGGER.error("TCP Initialisation Error: Connection refused")
-        dul.to_user_queue.put(None)
-        dul.scu_socket.close()
+    #dul.scu_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
+    # Create a TRANSPORT CONNECT primitive
+    primitive = assoc.transport_connect
+    # Spawn greenlet to handle the connection request, sends Evt2 when complete
+    # or Evt17 if connection closed
+    assoc.ae.transport.open_connection(primitive)
+
+    # We need to ensure that 'Sta4' is returned back to the Association
+    # before the transport connection request greenlet is allowed to proceed
     return 'Sta4'
 
 def AE_2(dul):

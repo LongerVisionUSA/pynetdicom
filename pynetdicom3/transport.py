@@ -264,21 +264,26 @@ class TransportService(object):
         # Alternatively the peer may just stop responding, in which case
         #   we need to rely on a timeout
         try:
-            while True:
-                gevent.sleep(0.5)
+            assoc = Association(self.ae, client_socket=socket)
+            ae.active_associations.append(assoc)
+
+
         except gevent.Timeout as t:
             if t is not network_timeout:
                 print('Non-network timeout')
                 raise
 
+             ae.active_associations.remove(assoc)
             print('Connection timed out')
         # requires gevent 1.3
         #finally:
             #network_timeout.close()
 
+
+
         print('Closing connection...')
 
-    def open_connection(self, primitive, timeout):
+    def open_connection(self, primitive):
         """Open a TCP/IP connection to `addr` on `port`.
 
         Parameters
@@ -300,13 +305,24 @@ class TransportService(object):
         """
         # What is dest?
         try:
-            dest = create_connection(primitive, timeout)
+            dest = create_connection(primitive, self.timeout)
         except IOError as exc:
             # Failed to connect
-            pass
-            return
+            return False
 
-        return True
+        return socket
+
+    def request_connection(self, primitive, socket):
+        """Request a connection"""
+        g = Greenlet.spawn(open_connection, primitive)
+
+        if g:
+            # Trigger FSM Evt2
+            pass
+        else:
+            # Trigger FSM Evt17
+            pass
+
 
     def start_server(self, port, server_params=None, ssl_args=None, blocking=True):
         """Start listening on `port` for connection requests.
